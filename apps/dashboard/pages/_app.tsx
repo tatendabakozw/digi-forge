@@ -1,17 +1,15 @@
 import { AppProps } from 'next/app';
-import Head from 'next/head';
+import { ChakraProvider } from '@chakra-ui/react';
 import './styles.css';
+import { StoreProvider } from '../context/Store';
 
 function CustomApp({ Component, pageProps }: AppProps) {
   return (
-    <>
-      <Head>
-        <title>Welcome to dashboard!</title>
-      </Head>
-      <main className="app">
-        <Component {...pageProps} />
-      </main>
-    </>
+    <StoreProvider>
+        <ChakraProvider>
+          <Component {...pageProps} />
+        </ChakraProvider>
+    </StoreProvider>
   );
 }
 

@@ -13,12 +13,18 @@ import cors from 'cors';
 import morgan from 'morgan';
 import dotenv from 'dotenv';
 import { connectDB } from '@config/mongo';
+import { ensurePlugins } from '@helpers/pulumiMethods';
+
 
 // setting up dotenv for env variables
 dotenv.config();
 
 //connect to database
 connectDB()
+
+// Install necessary GCP plugins once upon boot
+ensurePlugins();
+
 
 // port to listen on development
 const port = process.env.PORT || 3333;
@@ -49,9 +55,12 @@ app.get('/', (req, res) => {
 
 // user defined routes
 import authRoute from '@routes/auth/auth'
+import staticSitesRoute from '@routes/static-sites/static-sites'
 
 // user defined routers 
 app.use('/api/auth', authRoute)
+app.use('/api/static-sites', staticSitesRoute)
+
 
 // eror handler
 app.use((req, res, next) => {

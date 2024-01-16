@@ -31,6 +31,7 @@
     "progress-stream": "^2.0.0",
     "react": "18.2.0",
     "react-dom": "18.2.0",
+    "react-icons": "^5.0.1",
     "tslib": "^2.3.0",
     "uuid": "^9.0.1",
     "yauzl": "^2.10.0"

@@ -6,7 +6,7 @@ const router = express.Router();
 // /api/user/repos
 router.get('/repos', async (req, res, next) => {
   try {
-    const accessToken = res.user
+    const accessToken = 'res.user'
     console.log('get all repository of user from github', accessToken);
     return res.send(accessToken)
   } catch (error) {

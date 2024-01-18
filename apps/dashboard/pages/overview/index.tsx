@@ -50,7 +50,7 @@ const Overview = () => {
           <OverviewHeading />
           {/* search and filter */}
           <div className="flex flex-row items-center space-x-4 w-full">
-            <div className="border flex flex-row items-center flex-1 bg-white border-slate-200/50 text-sm rounded-lg px-2 space-x-4">
+            <div className="flex flex-row items-center flex-1 bg-white main-border text-sm rounded-lg px-2 space-x-4">
               <MagnifyingGlassIcon
                 height={20}
                 width={20}
@@ -62,7 +62,7 @@ const Overview = () => {
                 placeholder="search projects"
               />
             </div>
-            <div className="md:flex hidden flex-row items-center text-sm  bg-white rounded-lg divide-x-[1px] divide-slate-200/50 border border-slate-200/50  ">
+            <div className="md:flex hidden flex-row items-center text-sm  bg-white rounded-lg divide-x-[1px] divide-slate-200 main-border  ">
               {tap_options.map((item) => (
                 <button
                   onClick={() => setSelectedOption(item)}

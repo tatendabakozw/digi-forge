@@ -13,7 +13,7 @@ import { exportZipFIle } from './zipFileFunctions';
 export const ensurePlugins = async () => {
   const ws = await LocalWorkspace.create({});
   await ws.installPlugin('gcp', 'v4.0.0');
-  console.log('plugins installed');
+  console.log('Plugins installed');
 };
 
 // This function defines our Pulumi GCP Storage static website based on the content passed in the POST body.

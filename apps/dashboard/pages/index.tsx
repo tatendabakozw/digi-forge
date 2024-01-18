@@ -8,19 +8,17 @@ export function Index() {
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
-  const router = useRouter()
+  const router = useRouter();
 
   const login_user = async () => {
     setLoading(true);
     try {
-   
       setLoading(false);
       router.push('/overview');
       setPassword('');
       setEmail('');
       // console.log(data);
     } catch (error) {
-     
       setLoading(false);
     }
   };

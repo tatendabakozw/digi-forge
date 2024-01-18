@@ -2,11 +2,11 @@ import mongoose from 'mongoose';
 
 const siteSchema = new mongoose.Schema(
   {
-    name: {
+    title: {
       type: String,
-      required: [true, 'provide a name for your site'],
+      required: [true, 'provide a title for your site'],
     },
-    url: {
+    imageUrl: {
       type: String,
       default: '',
     },
@@ -19,6 +19,12 @@ const siteSchema = new mongoose.Schema(
       type: String,
       required: [true, 'No owner has been specified'],
     },
+    hostUrl:{
+      type: String
+    },
+    repo:{
+      type: String
+    }
   },
   {
     timestamps: true,

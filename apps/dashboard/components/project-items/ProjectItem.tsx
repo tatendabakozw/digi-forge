@@ -9,9 +9,9 @@ const ProjectItem = (props: projectItemProps) => {
         <LinkIcon height={16} width={16} />
         <p className="font-medium text-sm text-slate-900">{props.link}</p>
       </div>
-      <div className="bg-white flex flex-row border gap-4 border-slate-200/50 p-4 rounded-lg">
+      <div className="bg-white flex flex-row main-border gap-4 p-4 rounded-lg">
         <div className="flex-1 flex flex-row items-center space-x-4">
-          <div className="avatar h-10 w-10 flex-shrink-0 rounded-full bg-white border border-slate-200/50"></div>
+          <div className="avatar h-10 w-10 flex-shrink-0 rounded-full bg-white main-border"></div>
           <div className="flex flex-col">
             <p className="text-slate-900 font-semibold">{props.name}</p>
             <div className="flex flex-row items-center text-xs text-slate-500 space-x-1 font-medium">

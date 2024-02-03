@@ -1,7 +1,10 @@
+import GithubButton from '@components/buttons/GithubButton';
 import PrimaryButton from '@components/buttons/PrimaryButton';
 import PageHeading from '@components/page-heading/PageHeading';
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import { useFetch } from '@hooks/useFetch';
 import DashboardLayout from '@layouts/DashboardLayout';
+import { apiUrl } from '@utils/apiUrl';
 // import axios from 'axios';
 import React, { useState } from 'react';
 import { FaGithub } from 'react-icons/fa';
@@ -13,9 +16,13 @@ const StaticSite = () => {
     window.location.href = 'http://localhost:3333/auth/github';
   } 
 
+  const data = useFetch(`${apiUrl}/api/user/repos`)
+
+  console.log('data from login of user: ----- ', data)
+
   return (
     <DashboardLayout>
-      <div className="bg-slate-50">
+      <div className="bg-slate-50 min-h-screen">
         <div className="max-w-7xl w-full mx-auto py-16 px-4 space-y-8">
           <PageHeading
             page="New"
@@ -59,15 +66,7 @@ const StaticSite = () => {
                   <p className="text-center text-sm text-slate-900 font-medium capitalize">
                     Connect your github account
                   </p>
-                  <div className="flex">
-                    <button
-                      onClick={githubAuthHandler}
-                      className="bg-slate-900 flex flex-row items-center space-x-2 py-2 px-3 rounded-lg text-sm font-medium text-white"
-                    >
-                      <FaGithub />
-                      <p>Github</p>
-                    </button>
-                  </div>
+                  <GithubButton loading={false} onClick={githubAuthHandler} />
                 </div>
               )}
             </div>
@@ -93,9 +92,9 @@ const StaticSite = () => {
                       >
                         <path
                           stroke="currentColor"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
                           d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2"
                         />
                       </svg>

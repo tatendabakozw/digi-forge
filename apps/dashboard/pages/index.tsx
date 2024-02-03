@@ -1,8 +1,9 @@
 // import styles from './index.module.css';
-import Image from 'next/image';
 import PrimaryButton from '../components/buttons/PrimaryButton';
 import { useState } from 'react';
 import { useRouter } from 'next/router';
+import { FaGithub } from 'react-icons/fa';
+import Link from 'next/link';
 
 export function Index() {
   const [email, setEmail] = useState<string>('');
@@ -39,13 +40,8 @@ export function Index() {
           </p>
         </div>
         <button className="flex flex-row items-center border content-center justify-center border-slate-300/50 w-full p-2 rounded-lg space-x-4">
-          <Image
-            src={'/icons/google-logo.png'}
-            height={24}
-            width={24}
-            alt="google login icon"
-          />
-          <p className="text-sm text-slate-700">Sign in with Google</p>
+          <FaGithub />
+          <p className="text-sm text-slate-700">Sign in with Github</p>
         </button>
         <div className="flex flex-row items-center space-x-2">
           <div className="border-t border-slate-300/50 flex-1" />
@@ -72,10 +68,10 @@ export function Index() {
           </p>
         </div>
         <PrimaryButton onClick={login_user} loading={loading} text="Log In" />
-        <p className="text-slate-700 text-xs font-medium text-center">
-          So you have an account?{' '}
-          <span className="text-primary-original">Sign Up</span>
-        </p>
+        <div className="text-slate-700 flex flex-row items-center text-xs font-medium text-center">
+          <p>So you have an account?{' '}</p>
+          <Link href={'/register'} className="text-primary-original">Sign Up</Link>
+        </div>
       </div>
     </div>
   );

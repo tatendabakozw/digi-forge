@@ -1,0 +1,840 @@
+from flask import Flask, render_template, Response
+import cv2
+import numpy as np
+import serial
+import time
+import json
+
+app = Flask(__name__)
+coordinates = {"x": 0, "y": 0}  # Initialize coordinates
+camera = cv2.VideoCapture(0)
+
+# Set up the serial connection
+ser = serial.Serial('/dev/cu.usbserial-14330', 9600)  # Replace 'COM1' with the correct port
+
+red_dot_detected = False  # Flag to track if the red dot has been detected
+
+def identify_red_spot(frame, bounding_box):
+    global coordinates, red_dot_detected  # Declare variables as global
+    x, y, w, h = bounding_box
+
+    # print(f'{h} --- : --- {w} ')
+
+    # Extract the region of interest (ROI) inside the bounding box
+    roi = frame[y:y+h, x:x+w]
+
+    # Convert the ROI to the HSV color space for better color detection
+    hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+    # Define the lower and upper bounds for red color in HSV
+    lower_red = np.array([0, 100, 100])
+    upper_red = np.array([10, 255, 255])
+
+    # Create a binary mask for the red color within the specified range
+    mask = cv2.inRange(hsv_roi, lower_red, upper_red)
+
+    # Find contours in the mask
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Calculate the centroid of the red spot
+    if contours:
+        cnt = max(contours, key=cv2.contourArea)
+        M = cv2.moments(cnt)
+
+        # Check if the area is not zero before calculating the centroid
+        if M['m00'] != 0:
+            cx = int(M['m10'] / M['m00'])
+            cy = int(M['m01'] / M['m00'])
+
+            # Update the coordinates variable
+            coordinates["x"] = cx
+            coordinates["y"] = cy
+
+            if not red_dot_detected:
+                # Send coordinates via PySerial only once when red dot is detected
+                send_coordinates_via_serial(cx, cy, w, h)
+                red_dot_detected = True  # Set the flag to True
+
+            # Draw a circle at the centroid of the red spot
+            cv2.circle(roi, (cx, cy), 10, (0, 255, 255), -1)
+          
+            # Draw the position text inside the bounding box
+            cv2.putText(frame, f'Red Spot: ({cx}, {cy})', (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+    return frame  # Return the modified frame
+
+def send_coordinates_via_serial(x, y,w,h):
+    # Convert x and y to bytes and send them via PySerial
+    data = {"x": x, "y": y, "w":w, "h": h}  
+    json_data = json.dumps(data) + '\n'
+    print(json_data)
+    ser.write(json_data.encode())
+    time.sleep(2)  # Optional delay to avoid overwhelming the serial connection
+
+def generate_frames():
+    while True:
+        success, frame = camera.read()
+        if not success: 
+            break
+        else:
+            gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            _, binary_mask = cv2.threshold(gray_frame, 200, 255, cv2.THRESH_BINARY_INV)
+            contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.THRESH_BINARY_INV)
+            filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > 1000]
+
+            for contour in filtered_contours:
+                x, y, w, h = cv2.boundingRect(contour)
+
+                # Draw bounding boxes around the filtered contours
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+                # Identify and draw red spot position inside the bounding box
+                frame = identify_red_spot(frame, (x, y, w, h))
+
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/video_feed')
+def video_feed():
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
+
+ -----------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <ESP32Servo.h>
+#include <iostream>
+#include <sstream>
+
+// before starting
+// change async size in AsyncTCP.cpp to 256 -- xQueueCreate
+
+// how each servo will be used
+struct ServoPins {
+  Servo servo;
+  int servoPin;
+  String servoName;
+  int initialPosition;
+};
+
+// how to store each step that has been recorded
+struct RecordedStep {
+  int servoIndex;
+  int value;
+  int delayInStep;
+};
+
+// defining all servo motors
+// assigning all servo motors their pins
+// naming each servo motor
+// giving servo motors initial position
+std::vector<ServoPins> servoPins = {
+  { Servo(), 27, "Base", 90 },
+  { Servo(), 26, "Shoulder", 90 },
+  { Servo(), 25, "Elbow", 90 },
+  { Servo(), 33, "Gripper", 90 },
+};
+
+// value to store each recorded step
+std::vector<RecordedStep> recordedSteps;
+
+bool recordSteps = false;
+bool playRecordedSteps = false;
+
+unsigned long previousTimeInMilli = millis();
+
+// credentials to connect to wifi
+const char *ssid = "tatendaZw";
+const char *password = "12345679";
+
+AsyncWebServer server(80);
+AsyncWebSocket wsRobotArmInput("/RobotArmInput");
+
+// defining HTML as progmem
+// should be stored in flash memory
+const char *htmlHomePage PROGMEM = R"HTMLHOMEPAGE(
+ <!DOCTYPE html>
+<html>
+  <head>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <style>
+      input[type="button"] {
+        background-color: #164e63;
+        color: white;
+        border-radius: 30px;
+        width: 100%;
+        height: 40px;
+        font-size: 20px;
+        text-align: center;
+        border: none;
+      }
+
+      .noselect {
+        -webkit-touch-callout: none; /* iOS Safari */
+        -webkit-user-select: none; /* Safari */
+        -khtml-user-select: none; /* Konqueror HTML */
+        -moz-user-select: none; /* Firefox */
+        -ms-user-select: none; /* Internet Explorer/Edge */
+        user-select: none; /* Non-prefixed version, currently
+                                      supported by Chrome and Opera */
+      }
+
+      .slidecontainer {
+        width: 100%;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+      }
+
+      .slider {
+        -webkit-appearance: none;
+        width: 100%;
+        height: 10px;
+        border-radius: 5px;
+        background: #d3d3d3;
+        outline: none;
+        opacity: 0.7;
+        -webkit-transition: 0.2s;
+        transition: opacity 0.2s;
+      }
+
+      .slider:hover {
+        opacity: 1;
+      }
+
+      .slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #dc2626;
+        cursor: pointer;
+      }
+
+      .slider::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #dc2626;
+        cursor: pointer;
+      }
+
+      #ws-connection-message {
+        background-color: #dc2626;
+        border-radius: 10px;
+        color: white;
+        padding: 5px;
+        max-width: 24rem;
+        margin-left: auto;
+        margin-right: auto;
+        width: 100%;
+      }
+      .slider-outer-most {
+        display: flex;
+        flex-direction: column;
+        width: full;
+        padding-top: 1rem;
+      }
+      .slider-label {
+        text-align: left;
+        font-size: 1rem;
+        color: #374151;
+        padding-bottom: 5px;
+      }
+      .increment-button {
+        background-color: #164e63;
+        border: none;
+        cursor: pointer;
+        color: white;
+        border-radius: 5px;
+        margin-left: 0.25rem;
+      }
+    </style>
+  </head>
+  <body class="noselect" align="center" style="background-color: white">
+    <h1 style="color: #164e63; text-align: center">Arm Control</h1>
+    <p id="ws-connection-message">Not Connected</p>
+
+    <table
+      id="mainTable"
+      style="
+        width: 100%;
+        margin: auto;
+        table-layout: fixed;
+        display: flex;
+        flex-direction: column;
+        max-width: 24rem;
+      "
+      cellspacing="10"
+    >
+      <tr />
+      <tr />
+      <tr />
+      <tr />
+      <tr class="slider-outer-most">
+        <td class="slider-label"><b>Gripper: </b></td>
+        <td colspan="2">
+          <div class="slidecontainer">
+            <input
+              type="range"
+              min="0"
+              max="180"
+              value="90"
+              class="slider"
+              id="Gripper"
+              oninput='sendButtonInput("Gripper",value)'
+            />
+            <div
+              style="display: flex; flex-direction: row; align-items: center"
+            >
+              <button class="increment-button">-</button>
+
+              <button class="increment-button">+</button>
+            </div>
+          </div>
+        </td>
+      </tr>
+      <tr />
+      <tr />
+      <tr class="slider-outer-most">
+        <td class="slider-label"><b>Elbow:</b></td>
+        <td colspan="2" style="width: 100%">
+          <div class="slidecontainer" style="width: 100%">
+            <input
+              type="range"
+              min="0"
+              max="180"
+              value="90"
+              class="slider"
+              id="Elbow"
+              oninput='sendButtonInput("Elbow",value)'
+            />
+            <div
+              style="display: flex; flex-direction: row; align-items: center"
+            >
+              <button class="increment-button">-</button>
+
+              <button class="increment-button">+</button>
+            </div>
+          </div>
+        </td>
+      </tr>
+      <tr />
+      <tr />
+      <tr class="slider-outer-most">
+        <td class="slider-label"><b>Shoulder:</b></td>
+        <td colspan="2">
+          <div class="slidecontainer">
+            <input
+              type="range"
+              min="0"
+              max="180"
+              value="90"
+              class="slider"
+              id="Shoulder"
+              oninput='sendButtonInput("Shoulder",value)'
+            />
+            <div
+              style="display: flex; flex-direction: row; align-items: center"
+            >
+              <button class="increment-button">-</button>
+
+              <button class="increment-button">+</button>
+            </div>
+          </div>
+        </td>
+      </tr>
+      <tr />
+      <tr />
+      <tr class="slider-outer-most">
+        <td class="slider-label"><b>Base:</b></td>
+        <td colspan="2">
+          <div class="slidecontainer">
+            <input
+              type="range"
+              min="0"
+              max="180"
+              value="90"
+              class="slider"
+              id="Base"
+              oninput='sendButtonInput("Base",value)'
+            />
+            <div
+              style="display: flex; flex-direction: row; align-items: center"
+            >
+              <button class="increment-button">-</button>
+
+              <button class="increment-button">+</button>
+            </div>
+          </div>
+        </td>
+      </tr>
+      <tr />
+      <tr />
+      <tr>
+        <td  class="slider-label"><b>Record:</b></td>
+        <td>
+          <input
+            type="button"
+            id="Record"
+            value="OFF"
+            onclick="onclickButton(this)"
+          />
+        </td>
+        <td></td>
+      </tr>
+      <tr />
+      <tr />
+      <tr>
+        <td class="slider-label"><b>Play:</b></td>
+        <td>
+          <input
+            style="padding-left: 3rem; padding-right: 3rem;"
+            type="button"
+            id="Play"
+            value="OFF"
+            onclick="onclickButton(this)"
+          />
+        </td>
+        <td></td>
+      </tr>
+    </table>
+
+    <script>
+        var webSocketRobotArmInputUrl = "ws:\/\/" + window.location.hostname + "/RobotArmInput";
+      // var webSocketRobotArmInputUrl =
+      //   "ws:\/\/" + "192.168.175.95" + "/RobotArmInput";
+      var websocketRobotArmInput;
+      var isConnected = false;
+      var message_item = document.getElementById("ws-connection-message");
+
+      function initRobotArmInputWebSocket() {
+        websocketRobotArmInput = new WebSocket(webSocketRobotArmInputUrl);
+        websocketRobotArmInput.onopen = function (event) {
+          if (event.type == "open") {
+            isConnected = true;
+            message_item.textContent = "Connected";
+            message_item.style.backgroundColor = "#16a34a";
+          }
+        };
+        websocketRobotArmInput.onclose = function (event) {
+          console.log("event on close connection", event);
+          if (event.type == "close") {
+            isConnected = true;
+            message_item.textContent = "Not Connected";
+            message_item.style.backgroundColor = "#dc2626";
+          }
+          setTimeout(initRobotArmInputWebSocket, 2000);
+        };
+        websocketRobotArmInput.onmessage = function (event) {
+          var keyValue = event.data.split(",");
+          var button = document.getElementById(keyValue[0]);
+          button.value = keyValue[1];
+          if (button.id == "Record" || button.id == "Play") {
+            button.style.backgroundColor =
+              button.value == "ON" ? "#047857" : "#dc2626";
+            enableDisableButtonsSliders(button);
+          }
+        };
+      }
+
+      function sendButtonInput(key, value) {
+        var data = key + "," + value;
+        // console.log(value);
+        websocketRobotArmInput.send(data);
+      }
+
+      function onclickButton(button) {
+        console.log("asdfjkhkljahsdf");
+        button.value = button.value == "ON" ? "OFF" : "ON";
+        button.style.backgroundColor =
+          button.value == "ON" ? "#047857" : "#dc2626";
+        var value = button.value == "ON" ? 1 : 0;
+        sendButtonInput(button.id, value);
+        enableDisableButtonsSliders(button);
+      }
+
+      function enableDisableButtonsSliders(button) {
+        if (button.id == "Play") {
+          var disabled = "auto";
+          if (button.value == "ON") {
+            disabled = "none";
+          }
+          document.getElementById("Gripper").style.pointerEvents = disabled;
+          document.getElementById("Elbow").style.pointerEvents = disabled;
+          document.getElementById("Shoulder").style.pointerEvents = disabled;
+          document.getElementById("Base").style.pointerEvents = disabled;
+          document.getElementById("Record").style.pointerEvents = disabled;
+        }
+        if (button.id == "Record") {
+          var disabled = "auto";
+          if (button.value == "ON") {
+            disabled = "none";
+          }
+          document.getElementById("Play").style.pointerEvents = disabled;
+        }
+      }
+
+      window.onload = initRobotArmInputWebSocket;
+      document
+        .getElementById("mainTable")
+        .addEventListener("touchend", function (event) {
+          event.preventDefault();
+        });
+    </script>
+  </body>
+</html>
+)HTMLHOMEPAGE";
+
+// show html page when IP is hit
+void handleRoot(AsyncWebServerRequest *request) {
+  request->send_P(200, "text/html", htmlHomePage);
+}
+
+// if html is not found show this
+void handleNotFound(AsyncWebServerRequest *request) {
+  request->send_P(404, "text/html", "FileNotFound");
+}
+
+void onRobotArmInputWebSocketEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
+  switch (type) {
+    case WS_EVT_CONNECT:
+      Serial.printf("WebSocket client #%uu connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+      sendCurrentRobotArmState();
+      break;
+    case WS_EVT_DISCONNECT:
+      Serial.printf("Websocket client #%u disconnected", client->id());
+      break;
+    case WS_EVT_DATA:
+      AwsFrameInfo *info;
+      info = (AwsFrameInfo *)arg;
+      if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
+        std::string myData = "";
+        myData.assign((char *)data, len);
+        std::istringstream ss(myData);
+        std::string key, value;
+        std::getline(ss, key, ',');
+        std::getline(ss, value, ',');
+        Serial.printf("Key [%s] Value[%s]\n", key.c_str(), value.c_str());
+        int valueInt = atoi(value.c_str());
+
+        if (key == "Record") {
+          recordSteps = valueInt;
+          if (recordSteps) {
+            recordedSteps.clear();
+            previousTimeInMilli = millis();
+          }
+        } else if (key == "Play") {
+          playRecordedSteps = valueInt;
+        } else if (key == "Base") {
+          writeServoValues(0, valueInt);
+        } else if (key == "Shoulder") {
+          writeServoValues(1, valueInt);
+        } else if (key == "Elbow") {
+          writeServoValues(2, valueInt);
+        } else if (key == "Gripper") {
+          writeServoValues(3, valueInt);
+        }
+      }
+      break;
+    case WS_EVT_PONG:
+    case WS_EVT_ERROR:
+      break;
+    default:
+      break;
+  }
+}
+
+void sendCurrentRobotArmState() {
+  for (int i = 0; i < servoPins.size(); i++) {
+    wsRobotArmInput.textAll(servoPins[i].servoName + "," + servoPins[i].servo.read());
+  }
+  wsRobotArmInput.textAll(String("Record,") + (recordSteps ? "ON" : "OFF"));
+  wsRobotArmInput.textAll(String("Play,") + (playRecordedSteps ? "ON" : "OFF"));
+}
+
+void writeServoValues(int servoIndex, int value) {
+  if (recordSteps) {
+    RecordedStep recordedStep;
+    if (recordedSteps.size() == 0)  // We will first record initial position of all servos.
+    {
+      for (int i = 0; i < servoPins.size(); i++) {
+        recordedStep.servoIndex = i;
+        recordedStep.value = servoPins[i].servo.read();
+        recordedStep.delayInStep = 0;
+        recordedSteps.push_back(recordedStep);
+      }
+    }
+    unsigned long currentTime = millis();
+    recordedStep.servoIndex = servoIndex;
+    recordedStep.value = value;
+    recordedStep.delayInStep = currentTime - previousTimeInMilli;
+    recordedSteps.push_back(recordedStep);
+    previousTimeInMilli = currentTime;
+  }
+  servoPins[servoIndex].servo.write(value);
+}
+
+void playRecordedRobotArmSteps() {
+  if (recordedSteps.size() == 0) {
+    return;
+  }
+  //This is to move servo to initial position slowly. First 4 steps are initial position
+  for (int i = 0; i < 4 && playRecordedSteps; i++) {
+    RecordedStep &recordedStep = recordedSteps[i];
+    int currentServoPosition = servoPins[recordedStep.servoIndex].servo.read();
+    while (currentServoPosition != recordedStep.value && playRecordedSteps) {
+      currentServoPosition = (currentServoPosition > recordedStep.value ? currentServoPosition - 1 : currentServoPosition + 1);
+      servoPins[recordedStep.servoIndex].servo.write(currentServoPosition);
+      wsRobotArmInput.textAll(servoPins[recordedStep.servoIndex].servoName + "," + currentServoPosition);
+      delay(50);
+    }
+  }
+  delay(2000);  // Delay before starting the actual steps.
+  for (int i = 4; i < recordedSteps.size() && playRecordedSteps; i++) {
+    RecordedStep &recordedStep = recordedSteps[i];
+    delay(recordedStep.delayInStep);
+    servoPins[recordedStep.servoIndex].servo.write(recordedStep.value);
+    wsRobotArmInput.textAll(servoPins[recordedStep.servoIndex].servoName + "," + recordedStep.value);
+    delay(50);
+  }
+}
+
+void setUpPinModes() {
+  for (int i = 0; i < servoPins.size(); i++) {
+    servoPins[i].servo.attach(servoPins[i].servoPin);
+    servoPins[i].servo.write(servoPins[i].initialPosition);
+  }
+}
+
+void setup() {
+  setUpPinModes();
+  Serial.begin(115200);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  // Print local IP address and start web server
+  Serial.println("");
+  Serial.println("WiFi connected.");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  server.on("/", HTTP_GET, handleRoot);
+  server.onNotFound(handleNotFound);
+
+  wsRobotArmInput.onEvent(onRobotArmInputWebSocketEvent);
+  server.addHandler(&wsRobotArmInput);
+
+  server.begin();
+  Serial.println("HTTP server started");
+}
+
+void loop() {
+  wsRobotArmInput.cleanupClients();
+  if (playRecordedSteps) {
+    playRecordedRobotArmSteps();
+  }
+}
+
+--------------------------------------------------------------------------------------
+
+#include <Servo.h>
+#include <math.h>
+#include <ArduinoJson.h>
+
+float initialZ = 15.0;
+
+// Define servo motor pins
+int servo1Pin = 8;
+int servo2Pin = 9;
+int servo3Pin = 10;
+int pumpPin = 11;
+#define led1 6
+#define led2 7
+
+int BOUNDING_WIDTH;
+int BOUNDING_HEIGHT;
+
+Servo servo1;
+Servo servo2;
+Servo servo3;
+
+// Define arm dimensions (replace with your own values)
+float l1 = 5.0;  // length of link 1
+float l2 = 7.0;  // length of link 2
+float l3 = 6.0;  // length of link 3
+float l4 = 4.0;  // length of link 4
+
+void setup() {
+  Serial.begin(9600);
+
+  // Attach servo motors to pins
+  servo1.attach(servo1Pin);
+  servo2.attach(servo2Pin);
+  servo3.attach(servo3Pin);
+  pinMode(led1, OUTPUT);
+  pinMode(pumpPin, OUTPUT);
+  pinMode(led2, OUTPUT);
+  // Assume initial coordinates of the red dot (replace with actual values)
+  float initialX = 0.0;
+  float initialY = 10.0;
+
+// initialize servo motors ... 
+  smoothMove(servo2, 0);
+  smoothMove(servo1, 90);
+  smoothMove(servo3, 90);
+
+  // Initialize the arm at a specific position
+  // moveToPosition(initialX, initialY, initialZ);
+}
+
+void loop() {
+  // Make an HTTP request to get coordinates from Flask
+
+
+  if (Serial.available()) {
+    int i = 0;
+    while (i < 7) {
+      digitalWrite(led1, HIGH);
+      digitalWrite(led2, LOW);
+      delay(200);
+
+      digitalWrite(led1, LOW);
+      digitalWrite(led2, HIGH);
+      delay(200);
+      i = i + 1;
+    }
+    String payload = Serial.readStringUntil('\n');
+
+    // Create a JSON document
+    StaticJsonDocument<200> doc;
+
+    // Deserialize the JSON string
+    deserializeJson(doc, payload);
+
+    // Extract values
+    int xValue = doc["x"];
+    int yValue = doc["y"];
+    BOUNDING_WIDTH = doc["w"];
+    BOUNDING_HEIGHT = doc["h"];
+
+    // Parse and use the coordinates as needed
+
+    Serial.println("Received coordinates: " + payload);
+    Serial.print("X Value: ");
+    Serial.println(xValue);
+    Serial.print("Y Value: ");
+    Serial.println(yValue);
+    // Serial.println("Y Value: " + yPos);
+
+
+    Serial.print("W Value: ");
+    Serial.println(BOUNDING_WIDTH);
+    Serial.print("H Value: ");
+    Serial.println(BOUNDING_HEIGHT);
+
+    moveToPosition(xValue, yValue);
+  }
+
+  // delay(500);  // Adjust the delay based on your application's requirements
+}
+
+void moveToPosition(float x, float y) {
+  // Calculate inverse kinematics
+
+  /* CALCULATING ANGLE 2 */
+  //  ---------------- ###### ------------------------- //
+  float x1 = (x / float(BOUNDING_WIDTH)) * 22;  // height of object form (0,0) in cm
+  float xf = 17 - x1;                            // height from armn center'
+
+  float y1 = (y / float(BOUNDING_HEIGHT)) * 18;  // height of object form (0,0) in cm
+  float yf = 29 - y1;                           // width from arm center
+
+  float theta1 = atan2(xf, yf);
+
+  /* CALCULATING ANGLE 3 */
+  //  ---------------- ###### ------------------------- //
+  double h = sqrt(xf * xf + yf * yf);
+  float xh = h - 8.5;  // hypotinus
+  Serial.print("value of xh: ");
+  Serial.println(xh);
+  float theta3 = atan2(xh, 26);
+
+
+  Serial.print("value of x1: ");
+  Serial.println(x1);
+  Serial.print("value of y1: ");
+  Serial.println(y1);
+
+  Serial.print("value of xf: ");
+  Serial.println(xf);
+  Serial.print("value of yf: ");
+  Serial.println(yf);
+
+  // Convert angles to degrees
+  theta1 = degrees(theta1);
+  theta3 = degrees(theta3);
+
+  theta1 = float(90) + theta1;
+  theta3 = float(180) - theta3;
+
+  Serial.print("Angle 1: ");
+  Serial.println(theta1);
+  Serial.print("Angle 3: ");
+  Serial.println(theta3);
+
+  // Move the servos to the calculated positions
+
+  smoothMove(servo1, theta1);
+  smoothMove(servo3, theta3);
+  delay(500);
+
+  digitalWrite(pumpPin, HIGH);
+  delay(1000);
+  digitalWrite(pumpPin, LOW);
+
+  smoothMove(servo2, 0);
+  smoothMove(servo1, 90);
+  smoothMove(servo3, 90);
+  delay(500);
+  delay(1000);  // Delay for 1 second (you may adjust this as needed)
+}
+
+void smoothMove(Servo servo, int targetPos) {
+  int currentPosition = servo.read();
+
+  if (currentPosition < targetPos) {
+    for (int pos = currentPosition; pos <= targetPos; pos += 1) {
+      servo.write(pos);
+      delay(30);
+    }
+  } else {
+    for (int pos = currentPosition; pos >= targetPos; pos -= 1) {
+      servo.write(pos);
+      delay(30);
+    }
+  }
+
+  delay(1000);  // Wait for a moment at the target position
+}
+
+
+---------------------------------------------------------------------------------------

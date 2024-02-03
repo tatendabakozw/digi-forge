@@ -31,6 +31,10 @@ const userSchema = new mongoose.Schema(
     githubId: {
       type: String,
     },
+    githubAccessToken:{
+      type: String,
+      default: ''
+    },
     githubInfo: Object,
     username: {
       type: String,
